@@ -74,6 +74,9 @@ class GenerateReqInput:
     # Use the processor's `to_str()` method to generate the serialized string.
     custom_logit_processor: Optional[Union[List[Optional[str]], str]] = None
 
+    # Prefill or decode mode
+    is_prefill: bool = True
+
     def normalize_batch_and_arguments(self):
         if (
             self.text is None and self.input_ids is None and self.input_embeds is None

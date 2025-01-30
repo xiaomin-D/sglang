@@ -190,10 +190,46 @@ async def generate_request(obj: GenerateReqInput, request: Request):
         )
     else:
         try:
-            ret = await _global_state.tokenizer_manager.generate_request(
-                obj, request
-            ).__anext__()
-            return ret
+            # TODO: seperate the code path of prefill and decode
+
+            if obj.is_prefill is True:
+                # 1. set the max tokens to only 1 for just generating kv cache
+                # force max_new_tokens to 1 in obj
+                if obj.sampling_params and isinstance(obj.sampling_params, dict):
+                    obj.sampling_params["max_new_tokens"] = 1
+
+                ret = await _global_state.tokenizer_manager.generate_request(
+                    obj, request
+                ).__anext__()
+
+                DECODE_ROUTER_URL = "http://localhost:8000"
+
+                # 2. once kv cache is generated, send /prefill_finish to the decode router to get the selected decode worker
+                prefill_finish_response = requests.post(f"{DECODE_ROUTER_URL}/prefill_finish", json={"text": obj.text})
+                decode_worker_url = prefill_finish_response.json()["decode_worker_url"]
+
+                # 3. transfer the kv cache to the decode worker
+                # NOTE: fake transfer => just send the text to the decode worker /generate and generate the kv cache
+                response = requests.post(f"{decode_worker_url}/generate", json={"text": obj.text})
+                print(response.json())
+                if response.status_code == 200:
+                    print("Fake transfer success!")
+                else:
+                    print("Fake transfer failed!")
+
+                # 4. send the decode request to the decode worker
+                decode_response = requests.post(f"{DECODE_ROUTER_URL}/generate", json={"text": obj.text, "sampling_params": obj.sampling_params})
+
+                # 5 (optional) send the kv cache from the decode worker back to the prefill worker    
+                # 6. return the result
+                return decode_response.json()
+            else:
+                ret = await _global_state.tokenizer_manager.generate_request(
+                    obj, request
+                ).__anext__()
+                return ret
+        
+        
         except ValueError as e:
             logger.error(f"Error: {e}")
             return _create_error_response(e)
