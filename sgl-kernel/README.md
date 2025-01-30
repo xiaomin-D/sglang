@@ -4,6 +4,11 @@
 
 [![PyPI](https://img.shields.io/pypi/v/sgl-kernel)](https://pypi.org/project/sgl-kernel)
 
+## Build (xAI)
+```
+CUSTOM_CUTLASS_SRC_DIR=/root/xai/submodules/xutlass/ python setup.py bdist_wheel
+```
+
 ## Installation
 
 For CUDA 11.8:
