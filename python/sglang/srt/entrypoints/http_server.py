@@ -37,6 +37,7 @@ import uvloop
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, Response, StreamingResponse
+import aiohttp
 
 from sglang.srt.entrypoints.engine import _launch_subprocesses
 from sglang.srt.function_call_parser import FunctionCallParser
@@ -190,39 +191,52 @@ async def generate_request(obj: GenerateReqInput, request: Request):
         )
     else:
         try:
-            # TODO: seperate the code path of prefill and decode
-
             if obj.is_prefill is True:
                 # 1. set the max tokens to only 1 for just generating kv cache
-                # force max_new_tokens to 1 in obj
-                if obj.sampling_params and isinstance(obj.sampling_params, dict):
-                    obj.sampling_params["max_new_tokens"] = 1
+                import copy
+                
+                copy_obj = copy.deepcopy(obj)
+                if copy_obj.sampling_params and isinstance(copy_obj.sampling_params, dict):
+                    copy_obj.sampling_params["min_new_tokens"] = 1
+                    copy_obj.sampling_params["max_new_tokens"] = 1
 
                 ret = await _global_state.tokenizer_manager.generate_request(
-                    obj, request
+                    copy_obj, request
                 ).__anext__()
 
                 DECODE_ROUTER_URL = "http://localhost:8000"
 
-                # 2. once kv cache is generated, send /prefill_finish to the decode router to get the selected decode worker
-                prefill_finish_response = requests.post(f"{DECODE_ROUTER_URL}/prefill_finish", json={"text": obj.text})
-                decode_worker_url = prefill_finish_response.json()["decode_worker_url"]
+                async with aiohttp.ClientSession() as session:
+                    # 2. Send /prefill_finish to get decode worker
+                    async with session.post(
+                        f"{DECODE_ROUTER_URL}/prefill_finish", 
+                        json={"text": copy_obj.text}
+                    ) as response:
+                        prefill_finish_response = await response.json()
+                        decode_worker_url = prefill_finish_response["decode_worker_url"]
 
-                # 3. transfer the kv cache to the decode worker
-                # NOTE: fake transfer => just send the text to the decode worker /generate and generate the kv cache
-                response = requests.post(f"{decode_worker_url}/generate", json={"text": obj.text})
-                print(response.json())
-                if response.status_code == 200:
-                    print("Fake transfer success!")
-                else:
-                    print("Fake transfer failed!")
+                    # 3. TODO: Transfer kv cache to decode worker
+                    
+                    async with session.post(
+                        f"{decode_worker_url}/generate",
+                        json={"text": copy_obj.text, "sampling_params": copy_obj.sampling_params}
+                    ) as response:
+                        if response.status == 200:
+                            print("Fake transfer success!")
+                        else:
+                            print("Fake transfer failed!")
 
-                # 4. send the decode request to the decode worker
-                decode_response = requests.post(f"{DECODE_ROUTER_URL}/generate", json={"text": obj.text, "sampling_params": obj.sampling_params})
+                    # 4. Send decode request
+                    async with session.post(
+                        f"{DECODE_ROUTER_URL}/generate_decode",
+                        json={
+                            "decode_worker_url": decode_worker_url,
+                            "text": obj.text,
+                            "sampling_params": obj.sampling_params
+                        }
+                    ) as response:
+                        return await response.json()
 
-                # 5 (optional) send the kv cache from the decode worker back to the prefill worker    
-                # 6. return the result
-                return decode_response.json()
             else:
                 ret = await _global_state.tokenizer_manager.generate_request(
                     obj, request

@@ -48,6 +48,12 @@ class DecodeWorkerState:
     def __init__(self, url: str):
         self.url = url
         self.queue_size = 0  # Number of tokens in waiting queue
+    
+    def __str__(self) -> str:
+        return f"DecodeWorkerState(url='{self.url}', queue_size={self.queue_size})"
+    
+    def __repr__(self) -> str:
+        return self.__str__()
 
 app = FastAPI()
 
@@ -70,10 +76,15 @@ async def prefill_finish(request: PrefillFinishRequest):
     
     # Find worker with minimum queue size
     selected_worker = min(decode_workers.values(), key=lambda w: w.queue_size)
-    
+
+    print(decode_workers)
+
     # Update queue size - use length of text string instead of input_ids
     selected_worker.queue_size += len(request.text)
+
     
+    print(f"Prefill finish request received! Selected worker: {selected_worker.url}")
+
     return {"decode_worker_url": selected_worker.url}
 
 @app.post("/generate_decode")
@@ -84,11 +95,10 @@ async def generate_decode(request: GenerateDecodeRequest):
     if request.decode_worker_url not in decode_workers:
         raise HTTPException(status_code=404, detail="Decode worker not found")
     
+    print(f"Generate decode request received! Decode worker: {request.decode_worker_url}")
     worker = decode_workers[request.decode_worker_url]
     
     try:
-        # TODO: should be /generate
-        # Forward request to decode worker
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{worker.url}/generate",

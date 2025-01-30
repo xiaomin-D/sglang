@@ -1,0 +1,9 @@
+curl -X POST http://127.0.0.1:30001/generate \
+-H "Content-Type: application/json" \
+-d '{
+  "text": "Kanye west is, ",
+  "sampling_params": {
+    "temperature": 0
+  },
+  "is_prefill": "true"
+}'

@@ -75,7 +75,7 @@ class GenerateReqInput:
     custom_logit_processor: Optional[Union[List[Optional[str]], str]] = None
 
     # Prefill or decode mode
-    is_prefill: bool = True
+    is_prefill: bool = False
 
     def normalize_batch_and_arguments(self):
         if (
