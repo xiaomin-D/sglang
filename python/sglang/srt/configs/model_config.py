@@ -485,6 +485,7 @@ multimodal_model_archs = [
     "Gemma3ForConditionalGeneration",
     "Grok1VForCausalLM",
     "Grok1AForCausalLM",
+    "InternVLChatModel",
     # TODO: add multimodal support for "Llama4ForConditionalGeneration",
     "LlavaLlamaForCausalLM",
     "LlavaMistralForCausalLM",
