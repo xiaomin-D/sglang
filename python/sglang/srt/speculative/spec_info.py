@@ -18,7 +18,3 @@ class SpeculativeAlgorithm(IntEnum):
             None: SpeculativeAlgorithm.NONE,
         }
         return name_map[name]
-
-
-class SpecInfo:
-    pass

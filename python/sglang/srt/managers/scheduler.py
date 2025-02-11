@@ -1038,8 +1038,6 @@ class Scheduler:
 
             retracted_reqs, new_token_ratio = batch.retract_decode()
             self.new_token_ratio = new_token_ratio
-            if self.draft_worker:
-                self.draft_worker.finish_request(retracted_reqs)
 
             logger.info(
                 "Decode out of memory happened. "
@@ -1452,9 +1450,6 @@ class Scheduler:
                     # If not stream, we still want to output some tokens to get the benefit of incremental decoding.
                     or (not req.stream and len(req.output_ids) % 50 == 0)
                 ):
-                    if self.draft_worker and req.finished():
-                        self.draft_worker.finish_request(req)
-
                     rids.append(req.rid)
                     finished_reasons.append(
                         req.finished_reason.to_json() if req.finished_reason else None

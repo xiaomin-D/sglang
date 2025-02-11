@@ -262,11 +262,12 @@ class ServerArgs:
         if self.speculative_algorithm == "EAGLE":
             self.prefill_only_one_req = True
             self.disable_cuda_graph_padding = True
-            self.disable_radix_cache = True
             self.disable_overlap_schedule = True
             self.chunked_prefill_size = -1
+            self.max_running_requests = 32
             logger.info(
-                "The radix cache, chunked prefill, and overlap scheduler are disabled because of using eagle speculative decoding."
+                "The chunked prefill, and overlap scheduler are disabled because of using eagle speculative decoding."
+                "The max_running_requests has been set to 32.",
             )
 
         # GGUF

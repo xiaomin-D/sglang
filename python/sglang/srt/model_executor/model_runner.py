@@ -85,6 +85,7 @@ class ModelRunner:
         nccl_port: int,
         server_args: ServerArgs,
         is_draft_worker: bool = False,
+        req_to_token_pool: Optional[ReqToTokenPool] = None,
     ):
         # Parse args
         self.model_config = model_config
@@ -102,6 +103,7 @@ class ModelRunner:
         self.spec_algorithm = SpeculativeAlgorithm.from_string(
             server_args.speculative_algorithm
         )
+        self.req_to_token_pool = req_to_token_pool
 
         # Model-specific adjustment
         if (
@@ -604,6 +606,9 @@ class ModelRunner:
                     + max_num_reqs * self.server_args.speculative_num_steps
                     + 100
                 )
+                # Target worker and draft worker shares the same indices for the
+                # token_to_kv_pool, so we should make sure to match max_total_num_tokens.
+                self.max_total_num_tokens = self.server_args.draft_runner_cache_size
 
         if max_total_tokens is not None:
             if max_total_tokens > self.max_total_num_tokens:
@@ -619,12 +624,17 @@ class ModelRunner:
                 "Not enough memory. Please try to increase --mem-fraction-static."
             )
 
-        self.req_to_token_pool = ReqToTokenPool(
-            size=max_num_reqs + 1,
-            max_context_len=self.model_config.context_len + 4,
-            device=self.device,
-            enable_memory_saver=self.server_args.enable_memory_saver,
-        )
+        if self.req_to_token_pool is None:
+            self.req_to_token_pool = ReqToTokenPool(
+                size=max_num_reqs + 1,
+                max_context_len=self.model_config.context_len + 4,
+                device=self.device,
+                enable_memory_saver=self.server_args.enable_memory_saver,
+            )
+        else:
+            # Draft worker shares req_to_token_pool with the target worker.
+            assert self.is_draft_worker
+
         if (
             self.model_config.attention_arch == AttentionArch.MLA
             and not self.server_args.disable_mla
@@ -637,6 +647,7 @@ class ModelRunner:
                 layer_num=self.model_config.num_hidden_layers,
                 device=self.device,
                 enable_memory_saver=self.server_args.enable_memory_saver,
+                is_draft_model=self.is_draft_worker,
             )
         elif self.server_args.enable_double_sparsity:
             self.token_to_kv_pool = DoubleSparseTokenToKVPool(
@@ -648,6 +659,7 @@ class ModelRunner:
                 device=self.device,
                 heavy_channel_num=self.server_args.ds_heavy_channel_num,
                 enable_memory_saver=self.server_args.enable_memory_saver,
+                is_draft_model=self.is_draft_worker,
             )
         else:
             self.token_to_kv_pool = MHATokenToKVPool(
@@ -658,6 +670,7 @@ class ModelRunner:
                 layer_num=self.model_config.num_hidden_layers,
                 device=self.device,
                 enable_memory_saver=self.server_args.enable_memory_saver,
+                is_draft_model=self.is_draft_worker,
             )
         logger.info(
             f"Memory pool end. "

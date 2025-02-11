@@ -93,10 +93,7 @@ class BaseTokenToKVPool:
     """A memory pool that maps a token location to its kv cache data."""
 
     def __init__(
-        self,
-        size: int,
-        dtype: torch.dtype,
-        device: str,
+        self, size: int, dtype: torch.dtype, device: str, is_draft_model: bool = False
     ):
         self.size = size
         self.dtype = dtype
@@ -110,12 +107,16 @@ class BaseTokenToKVPool:
         self.free_slots = None
         self.is_not_in_free_group = True
         self.free_group = []
+        self.is_draft_model = is_draft_model
         self.clear()
 
     def available_size(self):
         return len(self.free_slots)
 
     def alloc(self, need_size: int):
+        if self.is_draft_model:
+            raise NotImplementedError("Draft model cannot allocate indices")
+
         if need_size > len(self.free_slots):
             return None
 
@@ -125,6 +126,9 @@ class BaseTokenToKVPool:
         return select_index.to(self.device, non_blocking=True)
 
     def free(self, free_index: torch.Tensor):
+        if self.is_draft_model:
+            raise NotImplementedError("Draft model cannot free indices")
+
         if free_index.numel() == 0:
             return
 
@@ -178,8 +182,9 @@ class MHATokenToKVPool(BaseTokenToKVPool):
         layer_num: int,
         device: str,
         enable_memory_saver: bool,
+        is_draft_model: bool = False,
     ):
-        super().__init__(size, dtype, device)
+        super().__init__(size, dtype, device, is_draft_model)
 
         self.memory_saver_adapter = TorchMemorySaverAdapter.create(
             enable=enable_memory_saver
@@ -307,8 +312,9 @@ class MLATokenToKVPool(BaseTokenToKVPool):
         layer_num: int,
         device: str,
         enable_memory_saver: bool,
+        is_draft_model: bool = False,
     ):
-        super().__init__(size, dtype, device)
+        super().__init__(size, dtype, device, is_draft_model)
 
         self.kv_lora_rank = kv_lora_rank
 
@@ -367,8 +373,9 @@ class DoubleSparseTokenToKVPool(BaseTokenToKVPool):
         device: str,
         heavy_channel_num: int,
         enable_memory_saver: bool,
+        is_draft_model: bool = False,
     ):
-        super().__init__(size, dtype, device)
+        super().__init__(size, dtype, device, is_draft_model)
 
         memory_saver_adapter = TorchMemorySaverAdapter.create(
             enable=enable_memory_saver
