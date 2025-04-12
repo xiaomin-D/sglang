@@ -35,7 +35,7 @@ from sglang.srt.model_loader.weight_utils import default_weight_loader
 from sglang.srt.models.deepseek_janus_pro import DropPath
 from sglang.srt.models.internlm2 import InternLM2ForCausalLM
 from sglang.utils import logger
-
+from sglang.srt.models.qwen2 import Qwen2ForCausalLM
 
 class InternVisionEmbeddings(nn.Module):
     def __init__(self, config: PretrainedConfig):
@@ -444,16 +444,18 @@ class InternVLChatModel(nn.Module):
         has_flash_attn = False
         use_flash_attn = use_flash_attn if has_flash_attn else False
         config.vision_config.use_flash_attn = True if use_flash_attn else False
-        config.llm_config.attn_implementation = (
-            "flash_attention_2" if use_flash_attn else "eager"
-        )
+        config.llm_config._attn_implementation = 'flash_attention_2' if use_flash_attn else 'eager'
 
-        self.vision_model = InternVisionModel(
-            config=config.vision_config, quant_config=quant_config
-        )
-        self.language_model = InternLM2ForCausalLM(
-            config=config.llm_config, quant_config=quant_config
-        )
+        logger.info(f'num_image_token: {self.num_image_token}')
+        logger.info(f'ps_version: {self.ps_version}')
+        
+        self.vision_model = InternVisionModel(config.vision_config)
+        if config.llm_config.architectures[0] == 'Qwen2ForCausalLM':
+            self.language_model = Qwen2ForCausalLM(config.llm_config)
+        elif config.llm_config.architectures[0] == 'InternLM2ForCausalLM':
+            self.language_model = InternLM2ForCausalLM(config.llm_config)
+        else:
+            raise NotImplementedError(f'{config.llm_config.architectures[0]} is not implemented.')
 
         vit_hidden_size = config.vision_config.hidden_size
         llm_hidden_size = config.llm_config.hidden_size
@@ -551,57 +553,66 @@ class InternVLChatModel(nn.Module):
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
         stacked_params_mapping = [
-            # (param_name, shard_name, shard_id)
-            ("gate_up_proj", "w1", 0),
+            (".qkv_proj", ".q_proj", "q"),
+            (".qkv_proj", ".k_proj", "k"),
+            (".qkv_proj", ".v_proj", "v"),
+            ("gate_up_proj", "up_proj", 1),
+            ("gate_up_proj", "gate_proj", 0),
+            ("gate_up_proj", "w1", 0), 
             ("gate_up_proj", "w3", 1),
         ]
-        params_dict = dict(self.named_parameters())
-
+        params_dict = dict(self.named_parameters(remove_duplicate=False))
         for name, loaded_weight in weights:
             if "rotary_emb.inv_freq" in name:
                 continue
-
-            # adapt to VisionAttention
+            original_name = name
             if "attn" in name and "vision" in name:
                 name = name.replace(r".attn.out_proj", r"self_attn.proj")
                 name = name.replace(r".attn.qkv", r".attn.qkv_proj")
 
             for param_name, weight_name, shard_id in stacked_params_mapping:
-                if weight_name not in name:
+                if weight_name not in original_name:
                     continue
-                name = name.replace(weight_name, param_name)
-                # Skip loading extra bias for GPTQ models.
-                if name.endswith(".bias") and name not in params_dict:
+                if "visual" in original_name:
                     continue
-                param = params_dict[name]
-                weight_loader = param.weight_loader
-                weight_loader(param, loaded_weight, shard_id)
-                break
-            else:
-                # Skip loading extra bias for GPTQ models.
-                if name.endswith(".bias") and name not in params_dict:
+                mapped_name = original_name.replace(weight_name, param_name)
+                if mapped_name.endswith(".bias") and mapped_name not in params_dict:
                     continue
-                param = params_dict[name]
-                if "wqkv" in name:
-                    config = self.config
-                    kv_groups = config.num_attention_heads // config.num_key_value_heads
-                    head_dim = config.hidden_size // config.num_attention_heads
-                    loaded_weight = loaded_weight.view(
-                        -1, 2 + kv_groups, head_dim, loaded_weight.shape[-1]
-                    )
-                    wq, wk, wv = torch.split(loaded_weight, [kv_groups, 1, 1], dim=1)
-                    wq = wq.reshape(-1, wq.shape[-1])
-                    wk = wk.reshape(-1, wk.shape[-1])
-                    wv = wv.reshape(-1, wv.shape[-1])
+                try:
+                    param = params_dict[mapped_name]
                     weight_loader = param.weight_loader
-                    weight_loader(param, wq, "q")
-                    weight_loader(param, wk, "k")
-                    weight_loader(param, wv, "v")
-                else:
-                    weight_loader = getattr(
-                        param, "weight_loader", default_weight_loader
-                    )
-                    weight_loader(param, loaded_weight)
-
+                    weight_loader(param, loaded_weight, shard_id)
+                    break
+                except KeyError:
+                    continue
+            else:
+                try:
+                    if name.endswith(".bias") and name not in params_dict:
+                        continue
+                    param = params_dict[name]
+                    if "wqkv" in name:
+                        config = self.config
+                        kv_groups = config.num_attention_heads // config.num_key_value_heads
+                        head_dim = config.hidden_size // config.num_attention_heads
+                        loaded_weight = loaded_weight.view(
+                            -1, 2 + kv_groups, head_dim, loaded_weight.shape[-1]
+                        )
+                        wq, wk, wv = torch.split(loaded_weight, [kv_groups, 1, 1], dim=1)
+                        wq = wq.reshape(-1, wq.shape[-1])
+                        wk = wk.reshape(-1, wk.shape[-1])
+                        wv = wv.reshape(-1, wv.shape[-1])
+                        weight_loader = param.weight_loader
+                        weight_loader(param, wq, "q")
+                        weight_loader(param, wk, "k")
+                        weight_loader(param, wv, "v")
+                    else:
+                        # 默认加载
+                        weight_loader = getattr(
+                            param, "weight_loader", default_weight_loader
+                        )
+                        weight_loader(param, loaded_weight)
+                except KeyError:
+                    print(params_dict.keys())
+                    raise
 
 EntryClass = InternVLChatModel
