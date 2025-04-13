@@ -478,16 +478,13 @@ def is_generation_model(model_architectures: List[str], is_embedding: bool = Fal
         return False
     else:
         return not is_embedding
-
-
 multimodal_model_archs = [
     "DeepseekVL2ForCausalLM",
     "Gemma3ForConditionalGeneration",
     "Grok1VForCausalLM",
     "Grok1AForCausalLM",
-    "InternVLChatModel",
-    # TODO: add multimodal support for "Llama4ForConditionalGeneration",
     "LlavaLlamaForCausalLM",
+    "Llama4ForConditionalGeneration",
     "LlavaMistralForCausalLM",
     "LlavaQwenForCausalLM",
     "LlavaVidForCausalLM",
@@ -498,6 +495,7 @@ multimodal_model_archs = [
     "Qwen2VLForConditionalGeneration",
     "Qwen2_5_VLForConditionalGeneration",
     "CLIPModel",
+    "InternVLChatModel",
 ]
 
 
