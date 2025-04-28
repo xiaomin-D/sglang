@@ -21,7 +21,7 @@ import torch
 # Adapted from https://raw.githubusercontent.com/Dao-AILab/flash-attention/refs/heads/main/flash_attn/bert_padding.py
 import torch.nn.functional as F
 from einops import rearrange, repeat
-from sgl_kernel.flash_attn import flash_attn_varlen_func
+from sgl_kernel.flash_attn import is_fa3_supported
 from torch import nn
 from transformers import PretrainedConfig, PreTrainedModel
 from transformers.activations import ACT2FN
@@ -39,6 +39,11 @@ from sglang.srt.models.deepseek_janus_pro import DropPath
 from sglang.srt.models.internlm2 import InternLM2ForCausalLM
 from sglang.srt.models.qwen2 import Qwen2ForCausalLM
 from sglang.utils import logger
+
+if is_fa3_supported():
+    from sgl_kernel.flash_attn import flash_attn_varlen_func
+else:
+    from flash_attn.flash_attn_interface import flash_attn_varlen_func
 
 
 class IndexFirstAxis(torch.autograd.Function):
@@ -394,6 +399,9 @@ class InternVisionEmbeddings(nn.Module):
 
     def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
         target_dtype = self.patch_embedding.weight.dtype
+        pixel_values = pixel_values.to(
+            device=self.patch_embedding.weight.device, dtype=target_dtype
+        )
         patch_embeds = self.patch_embedding(
             pixel_values
         )  # shape = [*, channel, width, height]
@@ -779,7 +787,6 @@ class InternVLChatModel(nn.Module):
             image_features (`torch.Tensor`): Image feature tensor of shape `(num_images, image_length, embed_dim)`).
         """
 
-        print(f"{items=}")
         pixel_values = torch.cat([item.pixel_values for item in items])
         image_features = self.extract_feature(pixel_values)
         return image_features
